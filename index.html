@@ -258,15 +258,12 @@
 })();
 
 /* ---------- Emscripten Module ---------- */
-var Module = {
-  canvas: (function () { return document.getElementById('canvas'); })(),
-  arguments: [],
-  /* ---------- 大小写别名修复 ----------
+/* ---------- 大小写别名修复 ----------
      游戏 lua 里资源名全小写（mmap.col / earth.002 / surface.002 / war.sta ...），
      而数据包里是 Mmap.col / Earth.002 / Surface.002 / War.sta。
      Linux(网页 MEMFS) 区分大小写 -> 调色板打不开 -> m_color32 全 0 -> 地图人物全黑。
      这里在引擎 main 跑起来之前，给所有含大写字母的资源补一份全小写副本。 */
-  preRun: [function jyCaseFix() {
+function jyCaseFixNow() {
     try {
       var FS = Module.FS;
       if (!FS) return;
@@ -296,7 +293,12 @@ var Module = {
       walk('/data/fight');
       window.__caseFixMade = made;
     } catch (e) {}
-  }],
+}
+
+var Module = {
+  canvas: (function () { return document.getElementById('canvas'); })(),
+  arguments: [],
+  preRun: [function () { try { jyCaseFixNow(); } catch (e) {} }],
   print: function (t) { (window.__log = window.__log || []).push('print: ' + t); console.log(t); },
   printErr: function (t) { (window.__log = window.__log || []).push('err: ' + t); console.error(t); },
   setStatus: function (t) {
@@ -312,6 +314,7 @@ var Module = {
     if (left === 0) Module.setStatus('');
   },
   onRuntimeInitialized: function () {
+    try { jyCaseFixNow(); } catch (e) {}   /* 数据包此时已解包，补小写别名 */
     var b = document.getElementById('boot');
     if (b) { b.style.opacity = '0'; setTimeout(function () { b.style.display = 'none'; }, 420); }
   }
