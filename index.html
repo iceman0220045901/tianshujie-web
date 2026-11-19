@@ -234,11 +234,11 @@
     display: flex; gap: calc(var(--btn) * .16); align-items: flex-end; pointer-events: auto;
   }
   /* 手柄模式：AB 竖排落在右侧窄机身正中（A 在上、B 在下） */
-  /* 手柄模式：A/B 连成一个胶囊，B 在上、A 在下（column-reverse 实现交换） */
+  /* 手柄模式：A/B 连成一个胶囊，A 在上、B 在下 */
   body.grip .btns {
     right: calc((var(--gapr) - var(--btn) - 12px) / 2 + 3px);
     bottom: auto; top: 50%; transform: translateY(-50%);
-    flex-direction: column-reverse; align-items: center;
+    flex-direction: column; align-items: center;
     gap: 5px;
     padding: 5px;
     border-radius: 999px;
@@ -367,8 +367,9 @@
     </div>
 
     <div class="btns">
-      <div class="btn cancel" data-key="Escape" data-kc="27"></div>
-      <div class="btn ok" data-key="Enter" data-kc="13"></div>
+      <!-- A 键（红，上）：确认 = Enter；B 键（黄，下）：返回 = Escape -->
+      <div class="btn cancel" data-key="Enter" data-kc="13"></div>
+      <div class="btn ok" data-key="Escape" data-kc="27"></div>
     </div>
   </div>
 </div>
