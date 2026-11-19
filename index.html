@@ -46,6 +46,8 @@
     transform-origin: 50% 50%;
     pointer-events: none; z-index: 7;
     border-radius: 3px;
+    /* 初始隐藏：只有在真正取到有效画面后才显示，避免任何情况下挡黑游戏 */
+    display: none;
   }
 
   /* 玻璃反光与暗角。扫描线 / 荫罩由 #crtGl 的 WebGL shader 生成（复刻 crt-lottes） */
@@ -466,7 +468,7 @@
     var srcCv = document.getElementById('canvas');
     var glCv = document.getElementById('crtGl');
     if (!srcCv || !glCv) return;
-    var gl = glCv.getContext('webgl', { antialias: false, alpha: false, depth: false, stencil: false });
+    var gl = glCv.getContext('webgl', { antialias: false, alpha: false, depth: false, stencil: false, preserveDrawingBuffer: true });
     if (!gl) { glCv.style.display = 'none'; return; }
 
     var VS = 'attribute vec2 aPos;void main(){gl_Position=vec4(aPos,0.0,1.0);}';
@@ -488,14 +490,7 @@
       '}',
 'void main(){',
 '  vec2 suv = gl_FragCoord.xy / uRes;',
-/* 桶形畸变：CRT 玻璃管面轻微外凸，四角往外撑 */
-'  vec2 p = suv * 2.0 - 1.0;',
-'  p.x *= 1.0 + (p.y * p.y) * 0.030;',
-'  p.y *= 1.0 + (p.x * p.x) * 0.040;',
-'  vec2 uv = p * 0.5 + 0.5;',
-'  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {',
-'    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return;',
-'  }',
+'  vec2 uv = suv;',
 '  float ly = uv.y * uIn.y;',
 '  float d  = ly - floor(ly) - 0.5;',
 '  float wB = exp2(kHardScan * (d - 1.0) * (d - 1.0));',
@@ -552,38 +547,71 @@
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.uniform1i(gl.getUniformLocation(pr, 'uTex'), 0);
     gl.uniform2f(gl.getUniformLocation(pr, 'uIn'), 1280, 720);
     var uIn = gl.getUniformLocation(pr, 'uIn');
     var uRes = gl.getUniformLocation(pr, 'uRes');
     gl.uniform2f(uIn, 1280, 720);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
-    /* 中转画布跟游戏 canvas 的实际分辨率同步，最近邻拷贝保住像素 */
-    var mid = document.createElement('canvas');
-    var mctx = null;
+    /* readPixels 从游戏自己的 GL 缓冲取帧，绕开 drawImage 跨 context 读不到像素的问题 */
+    /* 注意：不能在这里 getContext —— 此刻 emscripten 还没建 context，
+       抢先创建会把 canvas 的 context 属性固化，preserveDrawingBuffer 失效，取帧永远为空。
+       等 onRuntimeInitialized 之后再由 grab() 取。 */
+    var srcGl = null;
+    var pixels = null;
     var midW = 0, midH = 0;
+    var emptyFrames = 0;
 
+    /* 游戏在自己的 rAF 里绘制；这里用 rAF→setTimeout 把取帧推到该帧渲染之后，
+       否则读到的是已被清空的缓冲（画面上表现为整屏发暗） */
+    var pending = false;
     function frame() {
-      requestAnimationFrame(frame);
-      if (!glCv.width || !glCv.height) return;
+      requestAnimationFrame(function () {
+        if (pending) return;
+        pending = true;
+        setTimeout(function () { pending = false; grab(); }, 0);
+      });
+    }
+
+    function grab() {
+      window.__crtDbg = { rw: !!window.__crtReady, gw: glCv.width, gh: glCv.height, sg: !!srcGl };
+      if (!window.__crtReady) { frame(); return; }
+      if (!glCv.width || !glCv.height) { frame(); return; }
+      if (!srcGl) {
+        srcGl = srcCv.getContext('webgl') || srcCv.getContext('webgl2') || srcCv.getContext('experimental-webgl');
+        if (!srcGl) { frame(); return; }
+      }
       var sw = srcCv.width, sh = srcCv.height;
-      if (!sw || !sh) return;
+      if (!sw || !sh) { frame(); return; }
       if (sw !== midW || sh !== midH) {
         midW = sw; midH = sh;
-        mid.width = sw; mid.height = sh;
-        mctx = mid.getContext('2d', { alpha: false });
-        mctx.imageSmoothingEnabled = false;
+        pixels = new Uint8Array(sw * sh * 4);
         gl.uniform2f(uIn, sw, sh);
       }
-      try { mctx.drawImage(srcCv, 0, 0); }
-      catch (e) { return; }
+      try { srcGl.readPixels(0, 0, sw, sh, srcGl.RGBA, srcGl.UNSIGNED_BYTE, pixels); }
+      catch (e) {
+        if (!window.__crtErr) { window.__crtErr = String(e); console.warn('[CRT] readPixels', e); }
+        frame(); return;
+      }
+      var co = ((sh >> 1) * sw + (sw >> 1)) * 4;
+      window.__crtCtr = [pixels[co], pixels[co+1], pixels[co+2], pixels[co+3]].join(',');
+      /* 读不到内容（缓冲已被清空）就连续计数，超阈值直接撤掉 CRT 层，
+         宁可没有滤镜也不能把游戏画面挡黑 */
+      if (pixels[co] + pixels[co+1] + pixels[co+2] === 0) {
+        emptyFrames++;
+        if (emptyFrames > 40) { glCv.style.display = 'none'; return; }
+        frame(); return;
+      }
+      emptyFrames = 0;
+      if (glCv.style.display !== 'block') glCv.style.display = 'block';
       gl.viewport(0, 0, glCv.width, glCv.height);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mid);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sw, sh, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
       gl.uniform2f(uRes, glCv.width, glCv.height);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      frame();
     }
     frame();
   })();
@@ -797,8 +825,8 @@ var Module = {
   /* 提前用 preserveDrawingBuffer 建 context，CRT shader 才能稳定读到画面内容 */
   ctx: (function () {
     var c = document.getElementById('canvas');
-    var a = { alpha: true, depth: true, stencil: true, antialias: false,
-              preserveDrawingBuffer: true, premultipliedAlpha: true };
+    var a = { alpha: false, depth: true, stencil: true, antialias: false,
+              preserveDrawingBuffer: true, premultipliedAlpha: false };
     return c.getContext('webgl', a) || c.getContext('experimental-webgl', a);
   })(),
   arguments: [],
@@ -842,6 +870,8 @@ var Module = {
       if (b) { b.style.opacity = '0'; setTimeout(function () { b.style.display = 'none'; }, 420); }
       try { Module.callMain([]); }
       catch (e) { var el = document.getElementById('bootMsg'); if (el) el.textContent = '引擎启动失败: ' + e; console.error(e); }
+      /* 引擎已经跑起来、canvas 的 WebGL context 已建立，这时才允许 CRT 层取帧 */
+      setTimeout(function () { window.__crtReady = true; }, 300);
     }).catch(function (e) {
       var el = document.getElementById('bootMsg');
       if (el) el.textContent = '数据加载失败: ' + (e && e.message ? e.message : e);
