@@ -170,10 +170,10 @@
   }
   /* 手柄模式：方向盘压到左下方，避开 iPhone 横屏时左侧居中的刘海/圆角 */
   body.grip .pad {
-    /* 刘海/圆角那一侧至少留出安全区，再按机身中线居中 */
-    left: max(calc(env(safe-area-inset-left) + 6px), calc(var(--gapl) * .5 - var(--pad) * .5));
+    /* 贴近屏幕左下角：刘海在左侧垂直中部，底部这条带子是干净的 */
+    left: 2px;
     top: auto;
-    bottom: calc(env(safe-area-inset-bottom) + 14px);
+    bottom: max(6px, env(safe-area-inset-bottom));
     transform: none;
     background: none; border-radius: 0;
   }
@@ -234,11 +234,28 @@
     display: flex; gap: calc(var(--btn) * .16); align-items: flex-end; pointer-events: auto;
   }
   /* 手柄模式：AB 竖排落在右侧窄机身正中（A 在上、B 在下） */
+  /* 手柄模式：A/B 连成一个胶囊，B 在上、A 在下（column-reverse 实现交换） */
   body.grip .btns {
-    right: calc(var(--gapr) * .5 - var(--btn) * .59);
+    right: calc((var(--gapr) - var(--btn) - 12px) / 2 + 3px);
     bottom: auto; top: 50%; transform: translateY(-50%);
-    flex-direction: column; align-items: center;
-    gap: calc(var(--btn) * .30);
+    flex-direction: column-reverse; align-items: center;
+    gap: 5px;
+    padding: 5px;
+    border-radius: 999px;
+    background: linear-gradient(180deg,
+      #F6F6F5 0%, #ABABA9 9%, #9E9E9C 50%, #979795 91%, #EFEFEE 100%);
+    box-shadow:
+      inset 0 2px 4px rgba(255,255,255,.55),
+      inset 0 -5px 10px rgba(0,0,0,.30),
+      0 6px 15px rgba(34,36,40,.46);
+  }
+  /* 胶囊里的两颗键统一尺寸，并由容器统一描边，键本身不再画白边 */
+  body.grip .btn,
+  body.grip .btn.ok {
+    width: var(--btn); height: calc(var(--btn) * 1.06);
+    border-radius: 999px;
+    clip-path: inset(0 round 999px);
+    border: none;
   }
   .btn {
     width: var(--btn); height: var(--btn);
@@ -457,8 +474,9 @@
     /* 按键尺寸：手柄模式按左侧十字区宽度定，普通宽屏按屏宽 10.8%（对齐安卓占比） */
     var key;
     if (gripMode) {
-      /* 十字键 3 颗并排受左侧宽度限制；B 键最宽（1.18 倍）受右侧宽度限制 */
-      key = Math.round(Math.min(gapL / 2.66, gapR / 1.66, h * 0.126, 62));
+      /* 十字键 3 格宽要尽量吃满左侧机身（允许略微压到画面，用户要求"贴边、做大"）；
+         A/B 胶囊宽 = 按钮 1.30 倍 + 12px 内边距，受右侧机身宽度约束 */
+      key = Math.round(Math.min(gapL / 2.0, (gapR - 6) / 1.24, h * 0.17, 78));
       key = Math.max(key, 24);
     } else {
       key = Math.round(Math.max(42, Math.min(w * 0.108, dispH * 0.2)));
