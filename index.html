@@ -40,40 +40,37 @@
       0 0 0 10px #101012,
       0 14px 34px rgba(0,0,0,.85);
   }
+  /* WebGL CRT 层：盖在游戏 canvas 上，输出扫描线 + 斜向荫罩 */
+  #crtGl {
+    position: absolute; left: 50%; top: 50%;
+    transform-origin: 50% 50%;
+    pointer-events: none; z-index: 7;
+    border-radius: 3px;
+  }
 
-  /* CRT 复古滤镜，按 RetroArch crt-geom / crt-guest 的层次拆分：
-     ① 荫罩（aperture grille）RGB 三色竖纹，3px 一循环
-     ② 扫描线：2px 暗带 + 2px 亮带，模拟电子束逐行扫过的间隙
-     ③ 暗角：中心提亮 + 四周压暗，模拟球面玻璃的衰减 */
-  /* CRT 合成层：按 RetroArch crt-guest-advanced 的 beam 剖面 + Mega Bezel 的玻璃反光做
-     四层自下而上叠：暗角 -> 扫描线 -> 栅格萌罩 -> 玻璃反光 */
+  /* 玻璃反光与暗角。扫描线 / 荫罩由 #crtGl 的 WebGL shader 生成（复刻 crt-lottes） */
+
+
+
+
+
   #crtOverlay {
     position: absolute; left: 50%; top: 50%;
     transform-origin: 50% 50%;
     pointer-events: none; z-index: 8;
     border-radius: 3px;
     background:
-      /* 1. 玻璃反光：显像管球面的一道斜光，Duimon / Mega Bezel 的 glare 层 */
+      /* 玻璃反光：显像管球面的一道斜光，Duimon / Mega Bezel 的 glare 层 */
       linear-gradient(112deg,
-        rgba(255,255,255,.11) 0%,
-        rgba(255,255,255,.040) 13%,
-        rgba(255,255,255,.012) 24%,
+        rgba(255,255,255,.10) 0%,
+        rgba(255,255,255,.036) 13%,
+        rgba(255,255,255,.010) 24%,
         rgba(255,255,255,0) 36%,
         rgba(255,255,255,0) 100%),
-      /* 2. 栅格萌罩 aperture grille：RGB 三色 1px 竖纹，对应 maskstr 强度 */
-      repeating-linear-gradient(90deg,
-        rgba(255,42,42,.085) 0px, rgba(255,42,42,.085) 1px,
-        rgba(42,255,42,.085) 1px, rgba(42,255,42,.085) 2px,
-        rgba(42,42,255,.085) 2px, rgba(42,42,255,.085) 3px),
-      /* 3. 扫描线 beam 剖面：暗 1px + 半暗 1px + 亮 1px（scanline1=2.5, scanline2=36 的观感） */
-      repeating-linear-gradient(0deg,
-        rgba(0,0,0,.44) 0px, rgba(0,0,0,.44) 1px,
-        rgba(0,0,0,.14) 1px, rgba(0,0,0,.14) 2px,
-        rgba(0,0,0,0) 2px, rgba(0,0,0,0) 3px),
-      /* 4. 暗角：中心微亮、四角压到 .64，模拟球面玻璃衰减 */
-      radial-gradient(ellipse 72% 66% at 50% 48%,
-        rgba(255,252,240,.10) 0%, rgba(255,252,240,0) 44%,
-        rgba(0,0,0,.30) 76%, rgba(0,0,0,.64) 100%);
+      /* 暗角：中心微亮、四角压到 .58，模拟球面玻璃衰减 */
+      radial-gradient(ellipse 74% 68% at 50% 48%,
+        rgba(255,252,240,.09) 0%, rgba(255,252,240,0) 42%,
+        rgba(0,0,0,.26) 76%, rgba(0,0,0,.58) 100%);
   }
   /* 监视器铭牌：PVM 的型号字在屏幕右上，避开游戏右下角的按键提示 */
   #crtOverlay::after {
@@ -326,6 +323,7 @@
   <div id="gripT"></div>
   <div id="gripB"></div>
   <canvas id="canvas" tabindex="0" oncontextmenu="return false"></canvas>
+  <canvas id="crtGl"></canvas>
   <div id="crtOverlay"></div>
 
   <div id="ctl">
@@ -426,6 +424,17 @@
 
     /* 放大用最近邻（同安卓），缩小用双线性 */
     canvas.style.imageRendering = kPhys >= 1 ? 'pixelated' : 'auto';
+    /* WebGL CRT 层：同尺寸同变换，铺在 canvas 和 overlay 之间 */
+    var crtGl = document.getElementById('crtGl');
+    var physW = Math.round(1280 * kPhys), physH = Math.round(720 * kPhys);
+    if (crtGl) {
+      if (crtGl.width !== physW || crtGl.height !== physH) {
+        crtGl.width = physW; crtGl.height = physH;
+      }
+      crtGl.style.width = '1280px'; crtGl.style.height = '720px';
+      crtGl.style.left = cx + 'px';
+      crtGl.style.transform = canvas.style.transform;
+    }
 
     /* 四块机身 */
     var gL = document.getElementById('gripL'), gR = document.getElementById('gripR');
@@ -452,6 +461,132 @@
   window.addEventListener('resize', fitCanvas);
   window.addEventListener('orientationchange', function () { setTimeout(fitCanvas, 280); });
   setTimeout(fitCanvas, 1200);
+  /* ---------- CRT shader（复刻 Timothy Lottes 的 crt-lottes，PUBLIC DOMAIN） ---------- */
+  (function () {
+    var srcCv = document.getElementById('canvas');
+    var glCv = document.getElementById('crtGl');
+    if (!srcCv || !glCv) return;
+    var gl = glCv.getContext('webgl', { antialias: false, alpha: false, depth: false, stencil: false });
+    if (!gl) { glCv.style.display = 'none'; return; }
+
+    var VS = 'attribute vec2 aPos;void main(){gl_Position=vec4(aPos,0.0,1.0);}';
+
+    var FS = [
+      'precision highp float;',
+      'uniform sampler2D uTex;',
+      'uniform vec2 uIn;',
+      'uniform vec2 uRes;',
+      'const float kHardScan = -10.0;',
+      'const float kMaskDark = 0.58;',
+      'const float kBoost = 1.35;',
+      /* 横向三点高斯：让扫描线两侧的光晕自然扩散，而不是硬切 */
+      'vec3 h3(vec2 uv){',
+      '  vec3 a = texture2D(uTex, uv + vec2(-1.0/uIn.x, 0.0)).rgb;',
+      '  vec3 b = texture2D(uTex, uv).rgb;',
+      '  vec3 c = texture2D(uTex, uv + vec2( 1.0/uIn.x, 0.0)).rgb;',
+      '  return (a + 2.0*b + c) * 0.25;',
+      '}',
+'void main(){',
+'  vec2 suv = gl_FragCoord.xy / uRes;',
+/* 桶形畸变：CRT 玻璃管面轻微外凸，四角往外撑 */
+'  vec2 p = suv * 2.0 - 1.0;',
+'  p.x *= 1.0 + (p.y * p.y) * 0.030;',
+'  p.y *= 1.0 + (p.x * p.x) * 0.040;',
+'  vec2 uv = p * 0.5 + 0.5;',
+'  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {',
+'    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return;',
+'  }',
+'  float ly = uv.y * uIn.y;',
+'  float d  = ly - floor(ly) - 0.5;',
+'  float wB = exp2(kHardScan * (d - 1.0) * (d - 1.0));',
+'  float wC = exp2(kHardScan * d * d);',
+'  float wT = exp2(kHardScan * (d + 1.0) * (d + 1.0));',
+'  vec3 cB = h3(uv + vec2(0.0, -1.0 / uIn.y));',
+'  vec3 cC = h3(uv);',
+'  vec3 cT = h3(uv + vec2(0.0,  1.0 / uIn.y));',
+'  vec3 col = (cB * wB + cC * wC + cT * wT) / (wB + wC + wT);',
+/* 荫罩用物理像素坐标，不受 warp 影响 */
+'  float mx = fract((gl_FragCoord.x + gl_FragCoord.y * 3.0) / 6.0);',
+'  float mR = mx < 0.3333 ? 1.0 : kMaskDark;',
+'  float mG = (mx >= 0.3333 && mx < 0.6667) ? 1.0 : kMaskDark;',
+'  float mB = mx >= 0.6667 ? 1.0 : kMaskDark;',
+/* 管面边缘压暗 */
+'  float vig = 1.0 - pow(length(uv * 0.5 - 0.5) * 1.7, 2.3) * 0.5;',
+'  col = col * vec3(mR, mG, mB) * kBoost * vig;',
+'  gl_FragColor = vec4(col, 1.0);',
+'}'
+    ].join('\n');
+
+    function mk(type, code) {
+      var s = gl.createShader(type);
+      gl.shaderSource(s, code);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        console.warn('[CRT]', gl.getShaderInfoLog(s));
+        return null;
+      }
+      return s;
+    }
+    var vs = mk(gl.VERTEX_SHADER, VS), fs = mk(gl.FRAGMENT_SHADER, FS);
+    if (!vs || !fs) { glCv.style.display = 'none'; return; }
+    var pr = gl.createProgram();
+    gl.attachShader(pr, vs); gl.attachShader(pr, fs);
+    gl.linkProgram(pr);
+    if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) {
+      console.warn('[CRT]', gl.getProgramInfoLog(pr));
+      glCv.style.display = 'none'; return;
+    }
+    gl.useProgram(pr);
+
+    var buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    var aPos = gl.getAttribLocation(pr, 'aPos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+    var tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.uniform1i(gl.getUniformLocation(pr, 'uTex'), 0);
+    gl.uniform2f(gl.getUniformLocation(pr, 'uIn'), 1280, 720);
+    var uIn = gl.getUniformLocation(pr, 'uIn');
+    var uRes = gl.getUniformLocation(pr, 'uRes');
+    gl.uniform2f(uIn, 1280, 720);
+
+    /* 中转画布跟游戏 canvas 的实际分辨率同步，最近邻拷贝保住像素 */
+    var mid = document.createElement('canvas');
+    var mctx = null;
+    var midW = 0, midH = 0;
+
+    function frame() {
+      requestAnimationFrame(frame);
+      if (!glCv.width || !glCv.height) return;
+      var sw = srcCv.width, sh = srcCv.height;
+      if (!sw || !sh) return;
+      if (sw !== midW || sh !== midH) {
+        midW = sw; midH = sh;
+        mid.width = sw; mid.height = sh;
+        mctx = mid.getContext('2d', { alpha: false });
+        mctx.imageSmoothingEnabled = false;
+        gl.uniform2f(uIn, sw, sh);
+      }
+      try { mctx.drawImage(srcCv, 0, 0); }
+      catch (e) { return; }
+      gl.viewport(0, 0, glCv.width, glCv.height);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mid);
+      gl.uniform2f(uRes, glCv.width, glCv.height);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    frame();
+  })();
 
   /* ---------- 键盘事件注入 ---------- */
   var SPECIAL = { 13: 'Enter', 27: 'Escape', 32: ' ', 37: 'ArrowLeft', 38: 'ArrowUp', 39: 'ArrowRight', 40: 'ArrowDown' };
@@ -659,6 +794,13 @@ function loadGameData() {
 
 var Module = {
   canvas: (function () { return document.getElementById('canvas'); })(),
+  /* 提前用 preserveDrawingBuffer 建 context，CRT shader 才能稳定读到画面内容 */
+  ctx: (function () {
+    var c = document.getElementById('canvas');
+    var a = { alpha: true, depth: true, stencil: true, antialias: false,
+              preserveDrawingBuffer: true, premultipliedAlpha: true };
+    return c.getContext('webgl', a) || c.getContext('experimental-webgl', a);
+  })(),
   arguments: [],
   noInitialRun: true,
   preRun: [],
