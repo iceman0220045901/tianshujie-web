@@ -46,8 +46,8 @@
     transform-origin: 50% 50%;
     pointer-events: none; z-index: 7;
     border-radius: 3px;
-    /* 初始隐藏：只有在真正取到有效画面后才显示，避免任何情况下挡黑游戏 */
-    display: none;
+    /* CRT 滤镜已关闭（效果不好且压暗画面）。代码保留，想恢复时去掉这一行即可 */
+    display: none !important;
   }
 
   /* 玻璃反光与暗角。扫描线 / 荫罩由 #crtGl 的 WebGL shader 生成（复刻 crt-lottes） */
@@ -62,17 +62,12 @@
     pointer-events: none; z-index: 8;
     border-radius: 3px;
     background:
-      /* 玻璃反光：显像管球面的一道斜光，Duimon / Mega Bezel 的 glare 层 */
+      /* 只留一层几乎看不见的玻璃反光，不再压暗四角 */
       linear-gradient(112deg,
-        rgba(255,255,255,.10) 0%,
-        rgba(255,255,255,.036) 13%,
-        rgba(255,255,255,.010) 24%,
-        rgba(255,255,255,0) 36%,
-        rgba(255,255,255,0) 100%),
-      /* 暗角：中心微亮、四角压到 .58，模拟球面玻璃衰减 */
-      radial-gradient(ellipse 74% 68% at 50% 48%,
-        rgba(255,252,240,.09) 0%, rgba(255,252,240,0) 42%,
-        rgba(0,0,0,.26) 76%, rgba(0,0,0,.58) 100%);
+        rgba(255,255,255,.055) 0%,
+        rgba(255,255,255,.018) 15%,
+        rgba(255,255,255,0) 32%,
+        rgba(255,255,255,0) 100%);
   }
   /* 监视器铭牌：PVM 的型号字在屏幕右上，避开游戏右下角的按键提示 */
   #crtOverlay::after {
@@ -495,6 +490,9 @@
     var srcCv = document.getElementById('canvas');
     var glCv = document.getElementById('crtGl');
     if (!srcCv || !glCv) return;
+    /* CRT 滤镜已关闭（用户反馈效果不好、且压暗画面）。
+       代码完整保留，想恢复就把下面这行 return 去掉、并把 #crtGl 的 display:none!important 去掉 */
+    return;
     var gl = glCv.getContext('webgl', { antialias: false, alpha: false, depth: false, stencil: false, preserveDrawingBuffer: true });
     if (!gl) { glCv.style.display = 'none'; return; }
 
