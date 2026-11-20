@@ -345,6 +345,27 @@
   <div id="gripT"></div>
   <div id="gripB"></div>
   <canvas id="canvas" tabindex="0" oncontextmenu="return false"></canvas>
+  <script>
+  /* emscripten 用 canvas 的"视觉尺寸"（getBoundingClientRect，含 transform 缩放）
+     决定 WebGL 帧缓冲大小。画面被 CSS 缩小到 426px 显示，缓冲就只有 426×239，
+     再铺到 1281 物理像素上 —— 这就是糊的根因。
+     这里让引擎读到原生的 1280×720，帧缓冲就按全分辨率渲染，清晰度回到安卓版水平。 */
+  (function () {
+    var cv = document.getElementById('canvas');
+    if (!cv) return;
+    var NATIVE_W = 1280, NATIVE_H = 720;
+    var origRect = cv.getBoundingClientRect.bind(cv);
+    cv.getBoundingClientRect = function () {
+      var r = origRect();
+      return {
+        x: r.x, y: r.y, top: r.top, left: r.left,
+        right: r.left + NATIVE_W, bottom: r.top + NATIVE_H,
+        width: NATIVE_W, height: NATIVE_H,
+        toJSON: function () { return this; }
+      };
+    };
+  })();
+  </script>
   <canvas id="crtGl"></canvas>
   <div id="crtOverlay"></div>
 
