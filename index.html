@@ -408,12 +408,14 @@
       stage.style.boxShadow = '';
     }
 
-    /* 固定 1.5 倍物理放大：源像素 2 个 -> 物理 3 个，最近邻下节奏均匀，
-       比 1.625 这类非整数倍干净得多；屏幕放不下时才回落到最大可用倍率 */
+    /* 物理放大倍率：默认 1 倍 = 原生输出，1 个源像素正好落在 1 个物理像素上，最锐利；
+       ?scale=1.5 可回到之前的 1.5 倍（源像素 2 -> 物理 3），?scale=0.5 可再缩小 */
     var md = /[?&]dpr=([\d.]+)/.exec(location.search);
     var dpr = md ? parseFloat(md[1]) : (window.devicePixelRatio || 1);
+    var ms = /[?&]scale=([\d.]+)/.exec(location.search);
+    var kWant = ms ? parseFloat(ms[1]) : 1;
     var kPhysMax = Math.min(w * dpr / 1280, h * dpr / 720);
-    var kPhys = Math.min(1.5, kPhysMax);
+    var kPhys = Math.min(kWant, kPhysMax);
     var k = kPhys / dpr;
 
     /* 1.5 倍之后剩下的四边黑边，整圈填成皮卡丘机身。
