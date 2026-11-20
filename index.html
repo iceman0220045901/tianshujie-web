@@ -429,12 +429,13 @@
       stage.style.boxShadow = '';
     }
 
-    /* 物理放大倍率：默认 1 倍 = 原生输出，1 个源像素正好落在 1 个物理像素上，最锐利；
-       ?scale=1.5 可回到之前的 1.5 倍（源像素 2 -> 物理 3），?scale=0.5 可再缩小 */
+    /* 物理放大倍率：默认 1.5 倍（源像素 2 -> 物理 3）；
+       帧缓冲固定按原生 1280×720 渲染，放大只影响显示大小，不降清晰度。
+       ?scale=1 回到 1:1 原生、?scale=1.25 等都可调 */
     var md = /[?&]dpr=([\d.]+)/.exec(location.search);
     var dpr = md ? parseFloat(md[1]) : (window.devicePixelRatio || 1);
     var ms = /[?&]scale=([\d.]+)/.exec(location.search);
-    var kWant = ms ? parseFloat(ms[1]) : 1;
+    var kWant = ms ? parseFloat(ms[1]) : 1.5;
     var kPhysMax = Math.min(w * dpr / 1280, h * dpr / 720);
     var kPhys = Math.min(kWant, kPhysMax);
     var k = kPhys / dpr;
